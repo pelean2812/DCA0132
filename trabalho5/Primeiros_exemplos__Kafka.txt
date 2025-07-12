@@ -1,0 +1,504 @@
+# Introdução ao uso do Apache Kafka
+
+Este material tem como objetivo prover uma breve introdução ao Apache Kafka e fornecer um passo a passo de como utilizá-lo para consumir dados em tempo-real a partir de bancos de dados por meio de aplicações Apache Spark Streaming.
+
+De maneira resumida, o Kafka é uma plataforma de streaming distribuído desenvolvida para lidar com o processamento e armazenamento de fluxos contínuos de dados em tempo real.
+
+O Kafka atua como um sistema de mensageria distribuído, permitindo a comunicação assíncrona entre diferentes aplicações e sistemas em tempo real. Ele é baseado em uma arquitetura de publicação e subscrição (publish/subscribe), onde os produtores enviam mensagens para tópicos (topics), e os consumidores se inscrevem nos tópicos para receber as mensagens. 
+
+Uma das principais características do Kafka é a sua capacidade de armazenar dados em log de forma persistente e durável. Ele mantém um registro ordenado das mensagens, permitindo que as aplicações acessem e recuperem os dados históricos, além de funcionar como um buffer para lidar com picos de tráfego e garantir a entrega confiável das mensagens.
+
+O Kafka é amplamente utilizado em cenários como ingestão de dados em tempo real, processamento de eventos, monitoramento, análise de dados, integração de sistemas e streaming de dados para aplicativos em tempo real.
+
+Para mais informações deve-se consultar a documentação oficial do Apache Kafka.
+https://kafka.apache.org/intro
+https://kafka.apache.org/documentation/
+
+## Formato das mensagens do Kafka
+
+Um tópico Kafka é composto por uma sequência de registros (mensagens) ordenados e imutáveis. Cada registro em um tópico Kafka consiste em dois principais campos: Chave (key) e Valor (value).
+
+1. Chave (key): é um campo opcional que identifica exclusivamente um registro dentro de um tópico. A chave pode ser usada para determinar a qual partição do tópico um registro será atribuído. 
+
+2. Valor (value): é o campo principal do registro e contém os dados propriamente ditos. Ele representa a informação que está sendo transmitida por meio do tópico Kafka. O valor pode ser qualquer tipo de dado serializável, como uma sequência de caracteres, JSON, avro, etc.
+
+Além desses campos principais, cada registro também possui metadados adicionais que são automaticamente gerenciados pelo Kafka, incluindo:
+
+3. Offset: é uma identificação numérica exclusiva atribuída a cada registro em uma partição, e representa a posição do registro dentro da sequência do tópico. É usado para rastrear o progresso de leitura de um consumidor.
+
+4. Timestamp: indica o momento em que o registro foi produzido. Ele pode ser definido pelo produtor ou automaticamente atribuído pelo Kafka no momento da gravação.
+
+É importante ressaltar que a estrutura e o conteúdo específico dos campos (chave e valor) são definidos pela aplicação que produz e consome os dados, permitindo assim flexibilidade na modelagem e utilização do Kafka. 
+
+No contexto do Apache Spark, cada Dataframe criado a partir de um tópico kafka terá a seguinte estrutura de colunas: 
+key | value | topic | partition | offset | timestamp | timestampType
+
+## Como instalar e utilizar o Apache Kafka
+
+Por questões de simplicidade, este documento apresenta a instalação do Kafka por meio do Docker.
+
+-> Criar um docker-compose.yml. E adicionar o seguinte conteúdo ao mesmo:
+
+  kafka:
+    container_name: kafka
+    hostname: kafka
+    image: apache/kafka:3.9.1
+    networks:
+      - spark_network
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT'
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092'
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      CLUSTER_ID: 'aB7kL9QwXyT2ZpR'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      KAFKA_HOME: '/opt/kafka'
+      PATH: '$PATH:/opt/kafka/bin'
+    ports:
+      - "9092:9092/tcp"
+    healthcheck:
+      test: bash -c "kafka-topics.sh --list --bootstrap-server kafka:9092"
+      start_period: 90s
+      interval: 15s
+      timeout: 15s
+      retries: 5
+
+  connect:
+    image: debezium/connect:3.0.0.Final
+    container_name: connect
+    networks:
+      - spark_network
+    ports:
+      - "8083:8083/tcp"
+    depends_on:
+      - kafka
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: connect-cluster
+      CONFIG_STORAGE_TOPIC: connect-configs
+      OFFSET_STORAGE_TOPIC: connect-offsets
+      STATUS_STORAGE_TOPIC: connect-statuses
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_LOG4J_LOGGERS: org.reflections=ERROR
+
+# FIM 
+
+Estamos considerando que a rede 'spark_network' já tenha sido criada anteriormente.
+
+Em seguida, executar o comando: docker compose up
+
+Com este método de instalação, já teremos um container configurado e rodando o serviço Kafka (com o KRaft), juntamente com o conector Debezium (serviço debezium/connect) parte integrante do Kafka Connect.
+
+O KRaft (Kafka Raft Metadata Mode) é uma arquitetura do Apache Kafka que utiliza o protocolo Raft para gerenciar de forma distribuída todas os metadados do cluster, como tópicos, partições, controladores e configurações. Nesse modo, os próprios servidores Kafka elegem um controlador líder, que coordena as operações administrativas do cluster, enquanto os demais atuam como réplicas.
+
+O Kafka Connect é uma infraestrutura do Apache Kafka projetada para facilitar a integração de dados entre sistemas externos e o Kafka por meio de conectores. Ele disponibiliza uma API RESTful que permite registrar, listar, parar e monitorar conectores, sendo exposta normalmente na porta 8083, e pode ser acessada por ferramentas como curl, Postman ou outras.
+
+Neste contexto, o Debezium funciona como um conjunto de conectores especializados de captura de dados em tempo real (CDC - Change Data Capture), desenvolvidos para rodar sobre o Kafka Connect. Ou seja, o Debezium depende do Kafka Connect para operar, aproveitando sua infraestrutura para se conectar a bancos de dados e transformar alterações transacionais em eventos Kafka.
+
+O Debezium fornece conectores específicos para diferentes bancos de dados, como MySQL, PostgreSQL, MongoDB, SQL Server, Oracle, entre outros. Esses conectores monitoram os logs de alteração ou logs binários dos bancos de dados, capturam eventos de inserção, atualização e exclusão, e os transformam em mensagens JSON publicadas em tópicos do Kafka. Dessa forma, cada alteração no banco é convertida em um evento Kafka que pode ser consumido por serviços em tempo real.
+
+Para registrar um conector, é necessário enviar uma requisição POST para o endpoint da API REST do Kafka Connect: POST http://localhost:8083/connectors
+
+Essa requisição deve conter um JSON com duas partes principais:
+"name" – o nome que você quer dar ao conector.
+"config" – um objeto com todas as propriedades de configuração, como:
+	tipo de conector (connector.class)
+	dados de conexão ao banco (host, porta, usuário, etc.)
+	nome lógico do servidor (database.server.name)
+	tópicos Kafka, modo de snapshot, etc.
+
+Documentação: https://debezium.io/documentation/reference/stable/index.html
+
+
+## Utilização básica do Apache Kafka (sem Debezium)
+
+Tendo os serviços do Kafka sido iniciados, a partir deste momento podemos criar tópicos e consumir o seu conteúdo. Como exemplo, seguem os comandos abaixo. Entretanto, estes passos são opcionais.
+
+Acesse o container Kafka para digitar os comandos.
+
+- Como criar um tópico
+kafka-topics.sh --create --topic meu-topico --bootstrap-server kafka:9092
+
+Ao executar esse comando, o Kafka criará o tópico "meu-topico" no cluster Kafka, com as configurações padrão. Por padrão, o tópico será criado com uma única partição e replicação fator de 1.
+
+Explicação dos parâmetros utilizados:
+--create: Indica que estamos criando um novo tópico.
+--topic meu-topico: Especifica o nome do tópico que desejamos criar. Neste caso, o tópico será chamado de "meu-topico". Você pode substituir "meu-topico" pelo nome desejado para o seu tópico.
+--bootstrap-server kafka:9092: Especifica o(s) endereço(s) e porta(s) do(s) broker(s) Kafka a ser(em) utilizado(s) para conexão. Neste exemplo, estamos usando o broker localizado em "kafka" na porta 9092. 
+
+Opcionalmente podem ser definidos outros parâmetros, tais como de replicação e partições dos dados:
+kafka-topics.sh --create --topic meu-topico --replication-factor 1 --partitions 2 --bootstrap-server kafka:9092
+
+Explicação dos parâmetros utilizados:
+--replication-factor 1: Define o fator de replicação para 1. Isso significa que cada partição do tópico terá uma réplica no cluster Kafka. Para fins de teste ou em um ambiente de desenvolvimento com apenas um nó/broker, é comum usar um fator de replicação 1.
+--partitions 2: Define o número de partições para 2. As partições são unidades de paralelismo no Kafka e permitem que as mensagens sejam distribuídas e processadas em paralelo. Esse valor indica que o tópico terá 2 partições.
+
+- Para visualizar os tópicos criados:
+kafka-topics.sh --list --bootstrap-server kafka:9092
+
+- Para escrever eventos em um tópico:
+kafka-console-producer.sh --topic meu-topico --bootstrap-server kafka:9092
+(escrever o texto, para finalizar ctrl + c)
+
+- Para consumir eventos a partir de um tópico:
+kafka-console-consumer.sh --topic meu-topico --from-beginning --bootstrap-server kafka:9092
+
+Este último comando mantém o consumidor conectado ao produtor e tudo o que for produzido vai ser consumido em tempo real. O consumidor pode ser encerrado a qualquer tempo com a combinação de teclas ctrl + c.
+
+Explicação dos parâmetros utilizados:
+--from-beginning: Indica que queremos começar a consumir as mensagens desde o início do tópico. Isto garante que todas as mensagens disponíveis no tópico sejam consumidas.
+
+Consumir a partir de um offset específico:
+kafka-consumer-groups.sh --bootstrap-server kafka:9092 \
+  --reset-offsets --group meu-grupo \
+  --topic meu-topico --to-offset 10 --execute
+
+
+Com os comandos acima é possível interagir com o Apache Kafka, escrevendo e lendo mensagens em tópicos. 
+
+Vamos agora entender como integrar o Apache Kafka ao Apache Spark para consumir, em tempo real, os dados gerados por modificações em bancos de dados. Para isso, utilizamos o Debezium, que precisa ser configurado com os detalhes de conexão ao banco de dados que desejamos monitorar. O Debezium detecta automaticamente as inserções, atualizações e exclusões realizadas nas tabelas monitoradas, e publica esses eventos como mensagens em tópicos Kafka, permitindo que o Spark os consuma de forma contínua.
+
+
+## Configurando o Debezium
+
+1. Criar um conector para monitorar banco de dados PostgreSQL
+
+Para iniciar a captura de eventos em tempo real de um banco de dados PostgreSQL com o Debezium, é necessário registrar um conector no Kafka Connect. Abaixo, temos um exemplo de arquivo de configuração, que pode ser salvo como 'meu-conector.json':
+
+{
+  "name": "meu-conector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres-db",
+    "database.port": "5432",
+    "database.user": "postgres",
+    "database.password": "userpassword",
+    "database.dbname" : "mydb",
+    "plugin.name": "pgoutput",
+    "topic.prefix": "psql",
+    "table.whitelist": "public.tabela_do_banco", 
+    "database.server.name": "pg-monitor",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter"
+  }
+}
+
+Atenção: Os valores como hostname, user, password, dbname e table.whitelist devem ser ajustados conforme o ambiente e o banco de dados a ser monitorado. Certifique-se de que o PostgreSQL esteja acessível e em execução no host especificado (postgres-db no exemplo) e na porta correta (5432).
+
+Explicação dos campos:
+  - connector.class: Define o tipo de conector — neste caso, o conector Debezium para PostgreSQL.
+  - plugin.name: Determina o plugin lógico usado para leitura de mudanças no PostgreSQL (ex.: pgoutput, wal2json, etc.).
+  - database.server.name: Nome lógico do banco no contexto do Kafka. Esse valor será parte do nome do tópico.
+  - topic.prefix: Prefixo usado na criação automática de tópicos Kafka. O nome final será prefix.schema.tabela. Exemplo: psql.public.tabela_do_banco
+  - table.whitelist: Lista as tabelas a serem monitoradas.
+  - value.converter: Define o formato dos dados enviados ao Kafka (JSON, neste exemplo).
+
+Mais info sobre estes e outros parâmetros: 
+https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-connector-properties
+
+Submetendo o conector via API REST:
+
+Com o Kafka Connect em execução (na porta 8083), envie o conector com o comando abaixo:
+
+curl -X POST -H "Content-Type: application/json" \
+  --data @meu-conector.json \
+  http://localhost:8083/connectors
+
+Observação: Para que o conector funcione corretamente, o banco PostgreSQL precisa estar com a replicação lógica ativada. Isso exige que o parâmetro wal_level esteja definido como logical no arquivo postgresql.conf.
+
+
+2. Criar um conector para monitorar banco de dados MongoDB
+
+Para capturar eventos em tempo real a partir de um banco MongoDB, também é necessário registrar um conector Debezium no Kafka Connect, utilizando a API REST. O arquivo de configuração pode ser salvo como mongoc.json:
+
+{
+  "name": "mongo-connector", 
+  "config": {
+    "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+    "tasks.max": "1",
+    "mongodb.hosts": "mongo-db:27017", 
+    "mongodb.connection.string": "mongodb://mongo-db:27017/?replicaSet=rs0",
+    "mongodb.name": "mongo-monitor",
+    "topic.prefix": "mongo",
+    "database.include.list": "engdados", 
+    "collection.include.list": "engdados.colecao",
+    "mongodb.ssl.enabled": "false"
+  }
+}
+
+Explicação dos campos:
+  - connector.class: Define o conector Debezium para MongoDB.
+  - mongodb.hosts: Endereço e porta do servidor MongoDB.
+  - mongodb.connection.string: URI de conexão, que deve incluir o parâmetro replicaSet.
+  - mongodb.name: Nome lógico do cluster MongoDB para uso interno do Debezium.
+  - topic.prefix: Prefixo dos tópicos Kafka gerados. Exemplo de tópico: mongo.engdados.colecao
+  - database.include.list: Banco de dados MongoDB a ser monitorado.
+  - collection.include.list: Coleções (tabelas no MongoDB) a serem monitoradas.
+  - mongodb.ssl.enabled: Desabilita o uso de SSL na conexão (ajuste conforme seu ambiente).
+
+Para que o Debezium funcione corretamente com MongoDB, o banco deve estar em modo Replica Set, mesmo que com apenas um nó. Isso é necessário porque o conector Debezium depende do Oplog, que só é habilitado com Replica Set.
+
+Iniciar o MongoDB com Replica Set ativado:
+mongod --replSet=rs0 (...)
+
+Além de iniciar o modo ReplicaSet pelo mongoshell: 
+mongosh --eval "rs.initiate()"
+
+
+Submetendo o conector via API REST:
+
+Com o Kafka Connect em execução (porta 8083), envie o conector:
+
+curl -X POST -H "Content-Type: application/json" \
+  --data @mongoc.json \
+  http://localhost:8083/connectors
+
+
+###############################################
+# Exemplo 1:
+# Consumindo dados com Spark Streaming a partir de um banco de dados PostgreSQL ou MongoDB, usando Kafka + Debezium
+###############################################
+
+Caso esteja utilizando o PySpark via terminal, recomenda-se inicializar o ambiente já carregando o pacote que permite o consumo de dados a partir de tópicos Kafka. Para isso, use:
+
+pyspark --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6
+
+Esse comando garante que a biblioteca necessária para leitura de tópicos Kafka seja carregada no ambiente interativo do PySpark.
+
+Caso esteja utilizando o spark-submit ou desenvolvendo em Jupyter Notebook, é necessário criar a SparkSession de forma explícita, informando a dependência do Kafka via configuração:
+
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder \
+    .appName("KafkaExample") \
+    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6") \
+    .getOrCreate()
+
+Atenção: Certifique-se de que a versão do pacote corresponde à versão do Spark utilizada no ambiente (3.5.6, neste exemplo) e à versão compatível do Scala (2.12).
+
+O código abaixo define a aplicação pySpark para interagir com o Apache Kafka
+
+# Importar as bibliotecas
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
+
+# Declaração do DataFrame de streaming, apontando para o servidor Kafka e o tópico que será consumido.
+
+df = (
+    spark.readStream
+        .format("kafka")  # Define o formato como Kafka
+        .option("kafka.bootstrap.servers", "kafka:9092")  # Endereço do broker Kafka
+        .option("subscribe", "psql.public.tabela_do_banco")  # Nome do tópico Kafka a ser lido
+        .option("startingOffsets", "earliest")  # Lê desde o início do tópico
+        .load()  # Carrega os dados em formato binário (key e value como bytes)
+)
+
+# Definir o schema dos dados inseridos no tópico (neste caso precisa ser alterado conforme os dados que você for trabalhar)
+schema = StructType([
+    StructField("payload", StructType([
+        StructField("after", StructType([
+            StructField("coluna1", IntegerType(), True),
+            StructField("coluna2", IntegerType(), True)
+        ]))
+    ]))
+])
+
+# Neste exemplo, considera-se que a tabela monitorada no banco de dados possui duas colunas chamadas coluna1 e coluna2, ambas do tipo inteiro. Quando o Debezium captura alterações no banco, ele envia os dados em formato JSON estruturado dentro de um campo chamado payload. Este campo possui dois subcampos importantes:
+# before: representa os dados antes da operação (útil em updates e deletes);
+# after: representa os dados após a operação (ou seja, os valores inseridos ou atualizados).
+# Como o objetivo aqui é capturar os dados inseridos ou atualizados, o foco está no campo payload.after, onde as colunas de interesse estarão aninhadas.
+
+# Converter o valor (value) das mensagens Kafka, originalmente em binário, para JSON estruturado usando o schema definido acima. Em seguida, extrair diretamente as colunas 'coluna1' e 'coluna2'.
+dx = df.select(from_json(df.value.cast("string"), schema).alias("data")).select("data.payload.after.*")
+
+# Realizar as transformações e operações desejadas no DataFrame 'dx'
+# Neste exemplo, apenas vamos imprimir os dados estruturados na saída padrão (tela/terminal)
+ds = (
+    dx.writeStream 
+      .outputMode("append")          # Modo 'append': novas linhas são adicionadas à saída
+      .format("console")             # Formato de saída: console (stdout)
+      .option("truncate", False)     # Exibe o conteúdo completo das colunas (sem truncar)
+      .start()                       # Inicia o stream
+)
+
+# Para manter o stream em execução até que seja manualmente interrompido (com Ctrl+C, por exemplo), adicione:
+ds.awaitTermination()
+
+# FIM
+
+
+A partir deste ponto, sempre que forem inseridos dados na tabela tabela_do_banco do banco mydb no PostgreSQL, o conector Debezium detectará essas alterações, gerará eventos no formato JSON e os enviará automaticamente para o tópico Kafka: psql.public.tabela_do_banco
+
+O Apache Spark, configurado para consumir esse tópico em tempo real, receberá os dados e poderá processá-los de acordo com a lógica definida no seu código (por exemplo, exibir no console, gravar em arquivos, enviar para outro sistema etc.).
+
+
+- Simulando inserções no PostgreSQL
+
+Abaixo seguem comandos SQL que podem ser utilizados para criar e popular a tabela monitorada, simulando a chegada de eventos no tópico Kafka:
+
+-- Criar a tabela
+CREATE TABLE "tabela_do_banco" (
+  coluna1 INTEGER,
+  coluna2 INTEGER
+);
+
+-- Definir a chave primária (necessário para Debezium funcionar corretamente)
+ALTER TABLE "tabela_do_banco" ADD PRIMARY KEY (coluna1);
+
+-- Inserir dados para simular eventos
+INSERT INTO "tabela_do_banco" (coluna1, coluna2) VALUES (1, 10);
+INSERT INTO "tabela_do_banco" (coluna1, coluna2) VALUES (2, 20);
+INSERT INTO "tabela_do_banco" (coluna1, coluna2) VALUES (3, 30);
+INSERT INTO "tabela_do_banco" (coluna1, coluna2) VALUES (4, 40);
+INSERT INTO "tabela_do_banco" (coluna1, coluna2) VALUES (5, 50);
+INSERT INTO "tabela_do_banco" (coluna1, coluna2) VALUES (6, 60);
+
+
+###############################################
+# Exemplo 2
+# Produzir conteúdo no Kafka e consumir com Spark Streaming
+###############################################
+
+# Neste exemplo vamos produzir dados no formato json (estruturado) para que sejam consumidos por uma aplicação Spark Streaming
+
+# Primeiro precisamos produzir o conteúdo para um tópico kafka 
+# (o tópico será criado automaticamente, caso não exista)
+kafka-console-producer.sh --topic json_topic --bootstrap-server kafka:9092
+
+# Inserir os dados abaixo no formato json
+# Neste exemplo, os dados estão estruturados em 3 campos: identificador, nome e salario.
+{"id":1,"nome":"Maria","salario":3000}
+{"id":2,"nome":"Jose","salario":4000}
+{"id":3,"nome":"Joao","salario":3500}
+{"id":4,"nome":"Pedro","salario":3400}
+
+# Ao concluir a inserção dos dados no tópico, encerre a aplicação de produção OU abra um novo terminal para prosseguir com o uso do Spark
+
+Caso esteja utilizando o PySpark via terminal, recomenda-se inicializar o ambiente já carregando o pacote que permite o consumo de dados a partir de tópicos Kafka. Para isso, use:
+
+pyspark --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6
+
+Esse comando garante que a biblioteca necessária para leitura de tópicos Kafka seja carregada no ambiente interativo do PySpark.
+
+Caso esteja utilizando o spark-submit ou desenvolvendo em Jupyter Notebook, é necessário criar a SparkSession de forma explícita, informando a dependência do Kafka via configuração:
+
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder \
+    .appName("KafkaExample") \
+    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6") \
+    .getOrCreate()
+
+Atenção: Certifique-se de que a versão do pacote corresponde à versão do Spark utilizada no ambiente (3.5.6, neste exemplo) e à versão compatível do Scala (2.12).
+
+# Importar as bibliotecas
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
+
+# Criar o dataframe do tipo Stream, apontando para o servidor kafka e o tópico a ser consumido. Neste caso estamos rodando o kafka no broker.
+df = (spark.readStream
+        .format("kafka")
+        .option("kafka.bootstrap.servers", "kafka:9092")
+        .option("subscribe", "json_topic")
+        .option("startingOffsets", "earliest") 
+        .load()
+)
+
+# Explicação dos parâmetros:
+# kafka.bootstrap.servers: Especifica os endereços e portas dos brokers Kafka. Neste exemplo, estamos usando "kafka:9092" como o endereço do broker Kafka.
+# subscribe: Especifica o tópico Kafka do qual desejamos ler as mensagens. Neste exemplo, estamos lendo do tópico "json_topic".
+# startingOffsets: Especifica os offsets iniciais para ler as mensagens. Neste caso, definimos como "earliest" para começar a partir do início do tópico. Isso garante que todas as mensagens disponíveis sejam lidas.
+
+# Mais exemplos: https://spark.apache.org/docs/latest/structured-streaming-kafka-integration.html
+
+# Os dados obtidos a partir do Kafka estão estruturados no esquema chave-valor (key-value), conforme explicado anteriormente. Entretanto, os dados da coluna 'value' estão em um formato binário (notação hexadecimal) e precisam ser convertidos em string dentro do ambiente do pySpark para que possam ser analisados/tratados. Portanto, para visualizar os dados da coluna 'value', devemos convertê-los em string usando a função de CASTing.
+
+stringDF = df.selectExpr("CAST(value AS STRING)")
+
+# Desta forma criamos um novo dataframe 'stringDF' com a coluna 'value' representada como String.
+
+# Escolher uma formatação específica para a saída de dados (opcional)
+# Uma vez que os dados estão em formato json, caso desejado, podemos formatar os dados para que fiquem no formato correto de dataframe (organizado em colunas) com um schema definido. Para isso, devemos seguir os seguintes passos:
+
+# Definir o schema dos dados inseridos no tópico
+schema = StructType([ 
+    StructField("id", IntegerType(), True), 
+    StructField("nome", StringType(), True), 
+    StructField("salario", IntegerType(), True)
+  ])
+
+# Ler os dados em formato json do campo 'value' com o 'schema' correspondente e selecionar a coluna de interesse para "imprimir"
+
+saidaDF = stringDF.select(
+    from_json(col("value"), schema).alias("saida")
+).select("saida.*")
+
+# Criamos assim um novo dataframe 'saidaDF' que será utilizado para o stream de saída.
+
+# Escrever o stream de saída (na tela)
+ds = (saidaDF.writeStream
+    .format("console")
+    .outputMode("append")
+    .start()
+)
+
+# A partir deste momento, os dados do tópico json_topic serão consumidos (e neste caso) impressos em tela. Qualquer novo texto no formato json inserido no referido tópico, será consumido em tempo real pela aplicação spark.
+
+
+# (Opcional) Entretanto, caso seja desejado escrever um stream de dados em outro tópico kafka, alteramos o stream de saída dos dados para ler os dados do campo 'value' e escrever em outro tópico
+ds = (stringDF.select("value").writeStream
+    .format("kafka")
+    .trigger(processingTime="2 seconds")
+    .outputMode("append")
+    .option("kafka.bootstrap.servers", "kafka:9092")
+    .option("checkpointLocation", "kafka-checkpoint")
+    .option("topic", "meu-topico")
+    .option("startingOffsets", "earliest")
+    .start()
+)
+
+# Explicação dos parâmetros:
+# trigger: Frequência de processamento
+# checkpointLocation: Diretório para checkpoints
+# topic: Tópico de destino
+
+ds.awaitTermination()
+
+# FIM
+
+# É possível acompanhar o caminho dos dados produzidos e consumidos nos tópicos Kafka da seguinte forma:
+
+# Produzir dados JSON no tópico json_topic:
+kafka-console-producer.sh --topic json_topic --bootstrap-server kafka:9092
+
+# Consumir os dados processados no tópico meu-topico:
+kafka-console-consumer.sh --topic meu-topico --from-beginning --bootstrap-server kafka:9092 
+
+Dessa maneira, você observa em tempo real os dados que foram enviados ao json_topic e, após processamento pela aplicação Spark Streaming, publicados no meu-topico.
+
+
+Documentação e Referências para Consulta
+Apache Kafka
+Site oficial: https://kafka.apache.org
+
+Kafka Connect
+Introdução ao Kafka Connect: https://kafka.apache.org/documentation/#connect
+
+Debezium
+Site oficial: https://debezium.io
+Conector PostgreSQL: https://debezium.io/documentation/reference/stable/connectors/postgresql.html
+Conector MongoDB: https://debezium.io/documentation/reference/stable/connectors/mongodb.html
+
+Apache Spark Structured Streaming
+Documentação oficial: https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html
+
+Integração Spark + Kafka
+Guia oficial Spark-Kafka: https://spark.apache.org/docs/latest/structured-streaming-kafka-integration.html

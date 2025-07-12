@@ -1,0 +1,14 @@
+{
+  "name": "mongo-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+    "tasks.max": "1",
+    "mongodb.hosts": "mongo-db:27017",
+    "mongodb.connection.string": "mongodb://mongo-db:27017/?replicaSet=rs0",
+    "mongodb.name": "mongo-monitor",
+    "topic.prefix": "mongo",
+    "database.include.list": "ufrn",
+    "collection.include.list": "ufrn.top5_cursos",
+    "mongodb.ssl.enabled": "false"
+  }
+}
