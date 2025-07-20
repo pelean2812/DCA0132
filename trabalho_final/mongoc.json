@@ -1,0 +1,14 @@
+{
+  "name": "mongo-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+    "tasks.max": "1",
+    "mongodb.hosts": "mongo:27017",
+    "mongodb.connection.string": "mongodb://mongo:27017/?replicaSet=rs0",
+    "mongodb.name": "mongosrv",
+    "topic.prefix": "topico-mongo",
+    "database.include.list": "spark-streaming",
+    "collection.include.list": "spark-streaming.atletas",
+    "mongodb.ssl.enabled": "false"
+  }
+}

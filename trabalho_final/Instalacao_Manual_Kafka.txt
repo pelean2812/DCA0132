@@ -1,0 +1,210 @@
+Instalação diretamente no sistema linux.
+
+Neste método de instalação vamos considerar o uso do cluster disponibilizado em: 
+https://github.com/cmdviegas/hadoop-spark
+
+Diferente do método anterior, neste não será criado um novo container com o serviço Kafka. O Kafka será instalado no mesmo container do spark-master. Portanto, devemos acessar o terminal do spark-master e proceder com os comandos a seguir.
+
+# Acessar o terminal do container spark-master
+docker exec -it spark-master bash
+
+# Baixar o Apache Kafka
+wget -nc https://downloads.apache.org/kafka/3.9.1/kafka_2.12-3.9.1.tgz
+(Alternativamente, acessar https://kafka.apache.org/downloads)
+
+# Extrair
+tar -xzvf kafka_2.12-3.9.1.tgz && mv kafka_2.12-3.9.1 ~/kafka
+
+# Editar o arquivo .bashrc (~/.bashrc) para configurar as variáveis de ambiente. Ao final do mesmo, adicionar:
+export KAFKA_HOME="/home/myuser/kafka"
+export PATH="$PATH:$KAFKA_HOME/bin"
+
+(Salvar)
+
+# Carregar o .bashrc com as novas alterações
+source ~/.bashrc
+
+# Além disso, vamos considerar a versão 3.4.x do Apache Kafka com o KRaft (built-in) como controlador do cluster. No modo KRaft, o controlador (controller) é responsável por coordenar e supervisionar as operações do cluster, como a eleição de líderes de partições, o balanceamento de líderes e a coordenação de reatribuições de partições.
+
+# Para configurar o KRaft, se faz necessário editar as propriedades do mesmo por meio da edição do arquivo $KAFKA_HOME/config/kraft/server.properties. Basicamente serão modificadas três propriedades no arquivo: controller.quorum.voters, listeners, advertised.listeners. Abaixo seguem as sugestões de configuração:
+
+	# Alterar o valor de 'controller.quorum.voters' para:
+	controller.quorum.voters=1@spark-master:9093
+
+    # A propriedade 'controller.quorum.voters' é usada para configurar o quórum de votantes (voters) para a eleição do controlador (controller) em um cluster Kafka usando o modo KRaft. 
+    # 1@spark-master:9093: O número "1" indica o ID exclusivo do votante. Nesse caso, o votante tem o ID "1". Em um cluster com vários votantes, cada votante deve ter um ID exclusivo. 
+    # Esta configuração indica que o quórum de votantes para a eleição do controlador consiste em apenas um votante, que é o nó chamado "spark-master" na porta 9093. Ao iniciar o cluster Kafka com essa configuração, o algoritmo de eleição do KRaft usará o quórum de votantes definido para selecionar e manter um controlador ativo no cluster. O controlador é responsável por coordenar e supervisionar as operações do cluster.
+
+	# Alterar o valor de 'listeners' para:
+	listeners=PLAINTEXT://spark-master:9092,CONTROLLER://spark-master:9093
+
+    # A propriedade 'listeners' é usada para configurar os pontos de extremidade (endpoints) em que os brokers (servidores) do Apache Kafka irão escutar por conexões de clientes. Cada ponto de extremidade é definido por um protocolo e um endereço IP ou nome de host, seguido por uma porta.
+    # PLAINTEXT://spark-master:9092: Este ponto de extremidade utiliza o protocolo PLAINTEXT e escuta no endereço IP ou nome de host spark-master na porta 9092. O protocolo PLAINTEXT não oferece criptografia ou segurança adicional, portanto, é adequado para uso em ambientes não confidenciais.
+    # CONTROLLER://spark-master:9093: Este ponto de extremidade utiliza o protocolo CONTROLLER e escuta no endereço IP ou nome de host spark-master na porta 9093. O protocolo CONTROLLER é usado para comunicação interna entre os brokers Kafka para fins de coordenação e controle no cluster.
+
+	# Alterar o valor de 'advertised.listeners' para:
+	advertised.listeners=PLAINTEXT://spark-master:9092,CONTROLLER://spark-master:9093
+
+    # A propriedade 'advertised.listeners' é usada para especificar os pontos de extremidade (endpoints) em que os clientes Kafka podem se conectar aos brokers.
+
+	# Salvar o arquivo
+
+## Configurar o Kafka
+
+# Definindo um identificador do cluster Kafka automaticamente
+export KAFKA_CLUSTER_ID="$(kafka-storage.sh random-uuid)"
+
+# A propriedade KAFKA_CLUSTER_ID é uma variável de ambiente que armazena o identificador único do cluster Kafka. O identificador do cluster é um valor exclusivo que é gerado quando um cluster Kafka é iniciado pela primeira vez. Esta propriedade é usada internamente pelo Kafka para rastrear e identificar um cluster específico. Cada cluster Kafka terá um identificador único associado a ele. É importante observar que o KAFKA_CLUSTER_ID é um valor de leitura apenas e não deve ser definido ou modificado manualmente.
+
+# Preparar o diretório de logs
+kafka-storage.sh format -t $KAFKA_CLUSTER_ID -c$KAFKA_HOME/config/kraft/server.properties
+
+# Iniciar o servidor Kafka com as configurações definidas anteriormente
+kafka-server-start.sh $KAFKA_HOME/config/kraft/server.properties
+
+A partir deste ponto, podemos utilizar o Kafka normalmente, produzindo e consumindo mensagens a partir de tópicos.
+
+
+
+Configurando o Debezium para consumo de mensagens em tempo real a partir de banco de dados
+
+# Criar a pasta connect dentro da pasta de instalação do kafka
+mkdir ~/kafka/connect
+
+Para facilitar, recomenda-se a criação da variável KAFKA_CONNECT_DIR para apontar para o diretório de instalação do Kafka.
+
+export KAFKA_CONNECTOR_DIR=~/kafka/connect
+
+# Baixar o conector debezium para postgresql 
+# (Caso o tipo de banco de dados desejado seja outro, existem também conectores debezium para mysql, mongodb, oracle, e outros)
+wget -nc https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/2.7.3.Final/debezium-connector-postgres-2.7.3.Final-plugin.tar.gz -P $KAFKA_CONNECTOR_DIR
+
+# Baixar o conector debezium para mongodb 
+wget -nc https://repo1.maven.org/maven2/io/debezium/debezium-connector-mongodb/2.7.3.Final/debezium-connector-mongodb-2.7.3.Final-plugin.tar.gz -P $KAFKA_CONNECTOR_DIR
+
+# Extrair para a pasta kafka/connect/
+tar -xzvf $KAFKA_CONNECTOR_DIR/debezium-connector-postgres-2.7.3.Final-plugin.tar.gz -C $KAFKA_CONNECTOR_DIR
+
+ou (no caso do MongoDB)
+
+tar -xzvf $KAFKA_CONNECTOR_DIR/debezium-connector-mongodb-2.7.3.Final-plugin.tar.gz -C $KAFKA_CONNECTOR_DIR
+
+# Editar as configurações do Kafka connect editando o arquivo: $KAFKA_HOME/config/connect-standalone.properties.
+
+    # Alterar a propriedade 'bootstrap.servers' para
+    bootstrap.servers=spark-master:9092
+
+    # A propriedade 'bootstrap.servers' é uma configuração importante para estabelecer a conexão com um cluster Kafka. Ela define a lista de endereços e portas dos brokers Kafka que o produtor ou consumidor deve utilizar para se conectar ao cluster. Neste caso, a propriedade 'bootstrap.servers' está configurada com o valor spark-master:9092, indicando que o produtor ou consumidor será iniciado usando o broker Kafka localizado em spark-master na porta 9092.
+
+    # Ao final do arquivo editar a propriedade 'plugin.path'
+    #plugin.path=/home/spark/kafka/connect
+    plugin.path=/home/myuser/kafka/connect
+
+    # A propriedade 'plugin.path' define o caminho para o diretório onde os plugins do Kafka Connect estão localizados. 
+
+    # (Salvar)
+
+# Iniciar o Kafka Connect para integrar-se com Spark Streaming
+connect-standalone.sh $KAFKA_HOME/config/connect-standalone.properties
+
+É importante lembrar que o Kafka server deve estar rodando, conforme os passos indicados anteriormente.
+
+
+Criar um conector para monitorar banco de dados PostgreSQL
+
+# Sugestão: 'meu-conector.json' e salvar em $KAFKA_CONNECTOR_DIR/debezium-connector-postgres/
+
+# Inserir o conteúdo abaixo no arquivo meu-conector.json (para postgres):
+
+{
+  "name": "meu-conector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres-db",
+    "database.port": "5432",
+    "database.user": "postgres",
+    "database.password": "userpassword",
+    "database.dbname" : "meu-db",
+    "plugin.name": "pgoutput",
+    "topic.prefix": "psql",
+    "table.whitelist": "public.tabela-do-banco", 
+    "database.server.name": "pg-monitor",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter"
+  }
+}
+
+Atenção: Os valores como hostname, user, password, dbname e table.whitelist devem ser ajustados conforme o ambiente e o banco de dados a ser monitorado. Certifique-se de que o PostgreSQL esteja acessível e em execução no host especificado (postgres-db no exemplo) e na porta correta (5432).
+
+Explicação dos campos:
+  - connector.class: Define o tipo de conector — neste caso, o conector Debezium para PostgreSQL.
+  - plugin.name: Determina o plugin lógico usado para leitura de mudanças no PostgreSQL (ex.: pgoutput, wal2json, etc.).
+  - database.server.name: Nome lógico do banco no contexto do Kafka. Esse valor será parte do nome do tópico.
+  - topic.prefix: Prefixo usado na criação automática de tópicos Kafka. O nome final será prefix.schema.tabela. Exemplo: psql.public.tabela_do_banco
+  - table.whitelist: Lista as tabelas a serem monitoradas.
+  - value.converter: Define o formato dos dados enviados ao Kafka (JSON, neste exemplo).
+
+Mais info sobre estes e outros parâmetros: 
+https://debezium.io/documentation/reference/stable/connectors/postgresql.html#postgresql-connector-properties
+
+Submetendo o conector via API REST:
+
+Com o Kafka Connect em execução (na porta 8083), envie o conector com o comando abaixo:
+
+curl -X POST -H "Content-Type: application/json" \
+  --data @$KAFKA_CONNECTOR_DIR/debezium-connector-postgres/meu-conector.json \
+  http://spark-master:8083/connectors
+
+Observação: Para que o conector funcione corretamente, o banco PostgreSQL precisa estar com a replicação lógica ativada. Isso exige que o parâmetro wal_level esteja definido como logical no arquivo postgresql.conf.
+
+
+Criar um conector para monitorar banco de dados MongoDB
+
+# Sugestão: 'mongoc.json' e salvar em $KAFKA_CONNECTOR_DIR/debezium-connector-mongodb/
+
+# Inserir o conteúdo abaixo no arquivo mongoc.json (para MongoDB):
+
+{
+  "name": "mongo-connector", 
+  "config": {
+    "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+    "tasks.max": "1",
+    "mongodb.hosts": "mongo-db:27017", 
+    "mongodb.connection.string": "mongodb://mongo-db:27017/?replicaSet=rs0",
+    "mongodb.name": "mongo-monitor",
+    "topic.prefix": "mongo",
+    "database.include.list": "engdados", 
+    "collection.include.list": "engdados.colecao",
+    "mongodb.ssl.enabled": "false"
+  }
+}
+
+Explicação dos campos:
+  - connector.class: Define o conector Debezium para MongoDB.
+  - mongodb.hosts: Endereço e porta do servidor MongoDB.
+  - mongodb.connection.string: URI de conexão, que deve incluir o parâmetro replicaSet.
+  - mongodb.name: Nome lógico do cluster MongoDB para uso interno do Debezium.
+  - topic.prefix: Prefixo dos tópicos Kafka gerados. Exemplo de tópico: mongo.engdados.colecao
+  - database.include.list: Banco de dados MongoDB a ser monitorado.
+  - collection.include.list: Coleções (tabelas no MongoDB) a serem monitoradas.
+  - mongodb.ssl.enabled: Desabilita o uso de SSL na conexão (ajuste conforme seu ambiente).
+
+Para que o Debezium funcione corretamente com MongoDB, o banco deve estar em modo Replica Set, mesmo que com apenas um nó. Isso é necessário porque o conector Debezium depende do Oplog, que só é habilitado com Replica Set.
+
+Iniciar o MongoDB com Replica Set ativado:
+mongod --replSet=rs0 (...)
+
+Além de iniciar o modo ReplicaSet pelo mongoshell: 
+mongosh --eval "rs.initiate()"
+
+
+Submetendo o conector via API REST:
+
+Com o Kafka Connect em execução (porta 8083), envie o conector:
+
+curl -X POST -H "Content-Type: application/json" \
+  --data @$KAFKA_CONNECTOR_DIR/debezium-connector-mongodb/mongoc.json \
+  http://spark-master:8083/connectors
+
+============================OUTRO CURL============================
+curl -X POST -H "Content-Type: application/json" --data @/home/myuser/kafka/connect/debezium-connector-mongodb/mongoc.json http://spark-master:8083/connectors
+
