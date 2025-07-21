@@ -91,6 +91,7 @@ Então, ao detectar qualquer alteração de dados — seja uma inserção, atual
 
 # 5 e 6: Processamento e Armazenamento dos Dados
 
+## Aplicação PySpark
 Para a nossa ETL, desenvolvemos uma [aplicação pyspark](./TrabalhoFinal%20(1).ipynb) que executa no _Jupyter Lab_ (dentro no container Mestre do Spark na porta 8888).
 
 Após o import das bibliotecas, criamos a sessão spark:
@@ -214,3 +215,115 @@ with open("athletes.csv", newline='', encoding="utf-8") as f:
 
 print(f"{len(documentos)} documentos inseridos com sucesso no MongoDB")
 ```
+
+Realizou-se o mesmo procedimento para o arquivo .json. Declara-se o esquema dos dados, lê o .json e exibe alguns registros:
+
+```python
+schema_json = StructType([
+    StructField("name", StringType(), True),
+    StructField("nickname", StringType(), True),
+    StructField("nationality", StringType(), True),
+    StructField("disciplines", StringType(), True),
+    StructField("height", DoubleType(), True),
+    StructField("weight", DoubleType(), True),
+    StructField("birth_date", StringType(), True),
+    StructField("birth_place", StringType(), True),
+    StructField("birth_country", StringType(), True),
+    StructField("residence_place", StringType(), True),
+    StructField("residence_country", StringType(), True)
+])
+
+df_json = sp.read \
+    .format("json") \
+    .option("multiLine", True) \
+    .schema(schema_json) \
+    .load("hdfs://spark-master:9000/user/myuser/data/atletas_ficticios_30.json")
+
+
+print("Adicionando dados do JSON na coleção 'atletas'...")
+df_json.show(5)
+df_json.printSchema()
+```
+Em seguida, salva-se os dados do .json na mesma coleção e no mesmo banco de dados que os dados do arquivo .csv foram salvos.
+
+```python 
+import json
+#Salvando no MongoDB
+json_data = df_json.toJSON().collect()
+batch_size = 100
+for i in range(0, len(json_data), batch_size):
+    batch = [json.loads(doc) for doc in json_data[i:i+batch_size]]
+    collection.insert_many(batch)
+
+print(f"Dados inseridos! Total: {len(json_data)} registros")
+```
+
+Em seguida, lê-se a Stream do tópico kafka:
+
+```python
+df_kafka = sp.readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "spark-master:9092") \
+    .option("subscribe", "topico-mongo.spark-streaming.atletas") \
+    .option("startingOffsets", "latest") \
+    .load()
+```
+
+Após isso, o código abaixo "desembrulha" a mensagem JSON do Debezium vinda do Kafka, extraindo o registro do atleta (que está no campo after) e o transformando em um DataFrame limpo e estruturado com colunas.
+
+```python
+debezium_schema = StructType([
+    StructField("payload", StructType([
+        StructField("after", StringType(), True),
+        StructField("op", StringType(), True),
+    ]), True)
+])
+
+dx = df_kafka.select(from_json(df_kafka.value.cast("string"), debezium_schema).alias("data")) \
+       .select("data.payload.after") \
+       .withColumn("athlete_data", from_json(col("after"), athletes_schema)) \
+       .select("athlete_data.*")
+```
+
+Por fim, foi escrito um código que inicia a consulta de streaming, exibindo os dados processados em tempo real diretamente no console, sem cortar o conteúdo das colunas.
+
+```python
+print("Aguardando novos dados do Kafka para processar e salvar na coleção de destino...")
+ds = dx.writeStream \
+    .outputMode("append") \
+    .format("console") \
+    .option("truncate", False) \
+    .start()
+```
+
+Com isso, é possível observar nas imagens abaixo o monitoramento em tempo real dos dados, seja na inserção dos dados do .json: 
+
+![monitorando .json](image-1.png)
+
+Seja na inserção dos dados no arquivo .csv:
+
+![monitorando .csv](image-2.png)
+
+## Inserção de dados diretamente no console do mongo
+
+Além disso, é possível monitorar inserções realizadas diretamente no shell do mongo, por exemplo, quando executamos o comando abaixo no shell do mongo:
+
+```javascript
+db.atletas.insertOne({
+    "name": "LUCAS FICTÍCIO DA SILVA",
+    "nickname": "O Mestre dos Dados",
+    "nationality": "BRAZIL",
+    "disciplines": "DATA_ENGINEERING",
+    "height": 1.75,
+    "weight": 80.0,
+    "birth_date": "1995-10-20",
+    "birth_place": "SÃO PAULO",
+    "birth_country": "BRAZIL",
+    "residence_place": "NATAL",
+    "residence_country": "BRAZIL"
+})
+```
+
+É possível observar o processamento deste lote na aplicação pyspark:
+
+![monitorando inserção direta](image-3.png)
