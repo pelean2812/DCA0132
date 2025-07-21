@@ -40,6 +40,8 @@ $ hdfs dfs -put /home/myuser/myfiles/athletes.csv /user/myuser/data
 $ hdfs dfs -put /home/myuser/myfiles/atletas_ficticios_30.json /user/myuser/data
 ```
 
+> Obs: é possível verificar a inserção dos arquivos no hdfs executando o comando `hdfs dfs -ls /user/myuser/data`.
+
 # Tarefa 4: Configuração do Kafka
 
 ## 4.1: Kafka e Debezium
