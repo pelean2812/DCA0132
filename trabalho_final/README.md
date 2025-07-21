@@ -68,10 +68,149 @@ $ kafka-server-start.sh $KAFKA_HOME/config/kraft/server.properties
 $ connect-standalone.sh $KAFKA_HOME/config/connect-standalone.properties
 ``` 
 
-## 4.2 e 4.3 Conecotor mongo
+5. Submetemos o _conector mongo_ (mais informações na seção abaixo) via API REST:
+
+```bash
+$ curl -X POST -H "Content-Type: application/json" --data @/home/myuser/kafka/connect/debezium-connector-mongodb/mongoc.json http://spark-master:8083/connectors
+```
+
+Obs.: é possível verificar o status do _conector mongo_ executando o comando:
+
+```bash
+$ curl http://spark-master:8083/connectors/mongo-connector/status
+```
+
+
+## 4.2 e 4.3: Conecotor mongo
 
 Desenvolvemos um [Debezium para MongoDB](./mongoc.json), que foi configurado para implementar o Change Data Capture (CDC), transformando o banco de dados em uma fonte de dados de streaming em tempo real. Através da conexão com o Replica Set do MongoDB, especificada na URI de conexão, o conector monitora continuamente o log de operações (Oplog) da coleção atletas no banco de dados spark-streaming. 
 
 Então, ao detectar qualquer alteração de dados — seja uma inserção, atualização ou exclusão — o Debezium captura essa mudança, a formata em uma mensagem e a publica imediatamente no tópico Kafka correspondente, topico-mongo.spark-streaming.atletas. Essa arquitetura elimina a necessidade de consultas em lote (batch) e permite que aplicações consumidoras, como o Spark Streaming, processem os eventos de dados de forma reativa e instantânea, assim que eles ocorrem na origem. 
 
 > OBS: iniciamos o mongo em modo _replica-set_, para isso, no  terminal do mongo, entramos no mongosh, e em seguida executamos o comando `rs.initiate()`.
+
+# 5 e 6: Processamento e Armazenamento dos Dados
+
+Para a nossa ETL, desenvolvemos uma [aplicação pyspark](./TrabalhoFinal%20(1).ipynb) que executa no _Jupyter Lab_ (dentro no container Mestre do Spark na porta 8888).
+
+Após o import das bibliotecas, criamos a sessão spark:
+
+```python
+sp = SparkSession.builder \
+    .appName("spark") \
+    .config("spark.jars.packages",
+           "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,"
+           "org.mongodb.spark:mongo-spark-connector_2.12:10.1.1") \
+    .config("spark.master", "local[*]") \
+    .getOrCreate()
+```
+
+Em seguida, cria-se um dataframe do tipo stream, que aponta para o servidor kafka e também para o tópico que será consumido (`topico-mongo`), que monitora a coleção `atletas` do banco de dados `spark-streaming` (no MongoDB).
+
+```python
+df = (sp.readStream
+        .format("kafka")
+        .option("kafka.bootstrap.servers", "spark-master:9092")
+        .option("subscribe", "topico-mongo.spark-streaming.atletas")
+        .option("startingOffsets", "earliest") 
+        .load()
+)
+```
+
+Após isso, declara-se o esquema para o banco de dados de atletas e então lê-se arquivo .csv do HDFS. Porém, como há muitas colunas neste dataset, reduziu-se as colunas deixando apenas as colunas:
+
+- name
+- nickname
+- nationality
+- disciplines
+- height
+- weight
+- birth_date
+- birth_place
+- birth_country
+- residence_place
+- residence_country
+
+E no fim, visualizamos os 10 primeiros atletas deste dataset.
+
+```python
+athletes_schema = StructType([
+    StructField("code", IntegerType(), True),
+    StructField("current", BooleanType(), True),
+    StructField("name", StringType(), True),
+    StructField("name_short", StringType(), True),
+    StructField("name_tv", StringType(), True),
+    StructField("gender", StringType(), True),
+    StructField("function", StringType(), True),
+    StructField("country_code", StringType(), True),
+    StructField("country", StringType(), True),
+    StructField("country_long", StringType(), True),
+    StructField("nationality", StringType(), True),
+    StructField("nationality_long", StringType(), True),
+    StructField("nationality_code", StringType(), True),
+    StructField("height", DoubleType(), True),
+    StructField("weight", DoubleType(), True),
+    StructField("disciplines", StringType(), True),
+    StructField("events", StringType(), True),
+    StructField("birth_date", StringType(), True),
+    StructField("birth_place", StringType(), True),
+    StructField("birth_country", StringType(), True),
+    StructField("residence_place", StringType(), True),
+    StructField("residence_country", StringType(), True),
+    StructField("nickname", StringType(), True),
+    StructField("hobbies", StringType(), True),
+    StructField("occupation", StringType(), True),
+    StructField("education", StringType(), True),
+    StructField("family", StringType(), True),
+    StructField("lang", StringType(), True),
+    StructField("coach", StringType(), True),
+    StructField("reason", StringType(), True),
+    StructField("hero", StringType(), True),
+    StructField("influence", StringType(), True),
+    StructField("philosophy", StringType(), True),
+    StructField("sporting_relatives", StringType(), True),
+    StructField("ritual", StringType(), True),
+    StructField("other_sports", StringType(), True)
+])
+
+df_completo = sp.read \
+    .format("csv") \
+    .option("header", "true") \
+    .schema(athletes_schema) \
+    .load("hdfs://spark-master:9000/user/myuser/data/athletes.csv")
+
+df_selecionado = df_completo.select(
+    "name",
+    "nickname",
+    "nationality",
+    "disciplines",
+    "height",
+    "weight",
+    "birth_date",
+    "birth_place",
+    "birth_country",
+    "residence_place",
+    "residence_country",
+)
+print("Dados com colunas selecionadas:")
+df_selecionado.show(10, truncate=False)
+```
+
+Após a leitura e pré-processamento os dados do .csv, inserimos todos os dados na coleção `atletas` do banco de dados chamado `spark-streaming` do MongoDB.
+
+```python
+import csv
+from pymongo import MongoClient
+client = MongoClient("mongodb://mongo:27017")
+db = client["spark-streaming"]
+collection = db["atletas"]
+
+collection.delete_many({})
+
+with open("athletes.csv", newline='', encoding="utf-8") as f:
+    reader = csv.DictReader(f, delimiter=',')
+    documentos = list(reader)
+    collection.insert_many(documentos)
+
+print(f"{len(documentos)} documentos inseridos com sucesso no MongoDB")
+```
