@@ -30,7 +30,7 @@ $ sudo apt-get install *nome_do_pacote*
 
 # Tarefa 2: Data Lake
 
-O nosso Data Lake é composto por um [arquivo .csv](./athletes.csv) retirado de um [dataset dos jogos olímpicos de 2024](./https://www.kaggle.com/datasets/piterfm/paris-2024-olympic-summer-games), que contém as informações pessoais de todos os atletas. Além disso, também criamos um [arquivo .json](./atletas_ficticios_30.json) contendo informações de 30 atletas fictícios.
+O nosso Data Lake é composto por um [arquivo .csv](./athletes.csv) retirado de um [dataset dos jogos olímpicos de 2024](https://www.kaggle.com/datasets/piterfm/paris-2024-olympic-summer-games), que contém as informações pessoais de todos os atletas. Além disso, também criamos um [arquivo .json](./atletas_ficticios_30.json) contendo informações de 30 atletas fictícios.
 
 Inicialmente, inserimos os arquivos do Data Lake na pasta `\hadoop-spark\myfiles` (no nosso computador local). Em seguida, criamos uma pasta chamda `data` dentro do hdfs, e após isso, enviamos os arquivos para dentro dessa pasta:
 
