@@ -329,3 +329,15 @@ db.atletas.insertOne({
 É possível observar o processamento deste lote na aplicação pyspark:
 
 ![monitorando inserção direta](image-3.png)
+
+## Transformação de dados
+
+Por fim, realizamos uma pequena transformação nos dados. Alguns atletas não possuem apelido ("nickname"), e no banco de dados, isso está registrado como null. Então substituimos o null por por "sem nick".
+
+```python
+dx = dx.fillna("sem nick", subset=["nickname"])
+```
+
+Assim como nos casos anteriores, essa mudança também é vista pelo kafka:
+
+![monitorando transformação](image-4.png)
